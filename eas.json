@@ -6,9 +6,9 @@
   "build": {
     "preview": {
       "distribution": "internal",
+      "withoutCredentials": true,
       "ios": {
-        "simulator": false,
-        "withoutCredentials": true
+        "simulator": false
       }
     },
     "production": {
