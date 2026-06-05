@@ -1,0 +1,34 @@
+﻿# Large unrelated folders
+debug_screens/
+geofence-preview/
+images/
+New folder/
+__pycache__/
+
+# Unrelated file types
+*.py
+*.xlsx
+*.xls
+*.xlsb
+*.xlsm
+*.zip
+*.pdf
+*.bat
+*.txt
+*.py.txt
+*.json.bak
+*.lnk
+
+# Unrelated specific files
+sent_log.json
+status.json
+queue.json
+queue - Copy.json
+MANNEW.HTML
+STEKER.HTML
+latestmanauto.html
+ziGUIrb3
+ziwGmMgm
+__login_build.ps1
+__build_interactive.ps1
+__setup_and_build.ps1
