@@ -1,0 +1,33 @@
+﻿# Dependencies
+node_modules/
+.expo/
+dist/
+web-build/
+
+# System
+.DS_Store
+*.orig.*
+
+# Credentials
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.pem
+
+# Unrelated files in this folder
+New folder/
+geofence-preview/
+__login_build.ps1
+*.py
+*.py.txt
+*.xlsx
+*.zip
+*.pdf
+*.html
+*.txt
+*.bat
+start-expo.bat
+build-ios.bat
+main.py

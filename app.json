@@ -1,0 +1,63 @@
+{
+  "expo": {
+    "name": "تنبيه المنطقة",
+    "slug": "geofence-alert",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#1a1a2e"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.musto.geofencealert",
+      "infoPlist": {
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "التطبيق يحتاج موقعك لإرسال تنبيه عند الدخول أو الخروج من المنطقة المحددة",
+        "NSLocationAlwaysUsageDescription": "التطبيق يحتاج موقعك في الخلفية لإرسال تنبيهات حتى لو التطبيق مغلق",
+        "NSLocationWhenInUseUsageDescription": "التطبيق يحتاج موقعك لعرض الخريطة وتحديد موقعك",
+        "UIBackgroundModes": [
+          "location",
+          "fetch",
+          "remote-notification"
+        ]
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#1a1a2e"
+      },
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "التطبيق يحتاج موقعك لإرسال تنبيهات المنطقة المحددة"
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#4361ee"
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "e6bdc747-56f4-487d-84dd-d2d46f79dcdc"
+      }
+    },
+    "owner": "mustafasami"
+  }
+}
