@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════
-//   تطبيق تنبيه المنطقة — دوائر متعددة + بحث محسّن
+//   تطبيق تنبيه المنطقة — دوائر متعددة + رسائل خاصة + جدولة
 // ═══════════════════════════════════════════════════════════════
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -19,7 +19,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const GEOFENCE_TASK  = 'GEOFENCE_TASK';
 const KEY_SETTINGS   = '@geo_settings_v2';
 const KEY_HISTORY    = '@geo_history_v2';
-const KEY_ZONES      = '@geo_zones_v2';
+const KEY_ZONES      = '@geo_zones_v3';
 const KEY_LAST_NOTIF = '@geo_last_notif_v2';
 
 // ألوان مختلفة لكل دائرة
@@ -27,6 +27,9 @@ const ZONE_COLORS = [
   '#4361ee', '#e63946', '#2dc653', '#ff9f1c',
   '#a855f7', '#06b6d4', '#f97316', '#ec4899',
 ];
+
+// أيام الأسبوع (0=الأحد)
+const DAY_LABELS = ['أح', 'إث', 'ثل', 'أر', 'خم', 'جم', 'سب'];
 
 const DEFAULTS = {
   entryMsg:   'وصلت إلى المنطقة المحددة 📍',
@@ -51,14 +54,19 @@ const C = {
 };
 
 const newZoneTemplate = (colorIdx) => ({
-  id:      Date.now().toString(),
-  name:    '',
-  center:  null,
-  radius:  300,
-  mode:    'both',
-  color:   ZONE_COLORS[colorIdx % ZONE_COLORS.length],
-  enabled: true,
-  address: '',
+  id:           Date.now().toString(),
+  name:         '',
+  center:       null,
+  radius:       300,
+  mode:         'both',
+  color:        ZONE_COLORS[colorIdx % ZONE_COLORS.length],
+  enabled:      true,
+  address:      '',
+  // ── ميزات جديدة ──────────────────────────────────────────────
+  entryMessage: '',  // رسالة مخصصة للدخول  (فارغة = استخدام الإعداد العام)
+  exitMessage:  '',  // رسالة مخصصة للخروج  (فارغة = استخدام الإعداد العام)
+  scheduleDays: [],  // [] = كل الأيام | [0,5,6] = أرقام الأيام فقط
+  scheduleDate: '',  // '' = كل التواريخ | 'YYYY-MM-DD' = تاريخ محدد
 });
 
 // ─── Background Task ──────────────────────────────────────────
@@ -66,11 +74,29 @@ TaskManager.defineTask(GEOFENCE_TASK, async ({ data, error }) => {
   if (error || !data) return;
   const { eventType, region } = data;
   try {
-    const raw = await AsyncStorage.getItem(KEY_SETTINGS);
-    const s   = raw ? { ...DEFAULTS, ...JSON.parse(raw) } : DEFAULTS;
+    const raw  = await AsyncStorage.getItem(KEY_SETTINGS);
+    const s    = raw ? { ...DEFAULTS, ...JSON.parse(raw) } : DEFAULTS;
+
+    // جلب بيانات المنطقة المحددة (identifier = zone.id)
+    const zonesRaw = await AsyncStorage.getItem(KEY_ZONES);
+    const allZones = zonesRaw ? JSON.parse(zonesRaw) : [];
+    const zone     = allZones.find(z => z.id === region.identifier);
+
     const isEnter = eventType === Location.GeofencingEventType.Enter;
 
-    // وقت الهدوء
+    // ── فحص جدول الأيام الخاص بالمنطقة ─────────────────────
+    if (zone?.scheduleDays?.length > 0) {
+      const todayDay = new Date().getDay(); // 0=الأحد
+      if (!zone.scheduleDays.includes(todayDay)) return;
+    }
+
+    // ── فحص تاريخ محدد ───────────────────────────────────────
+    if (zone?.scheduleDate) {
+      const todayStr = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+      if (todayStr !== zone.scheduleDate) return;
+    }
+
+    // ── وقت الهدوء (عام) ────────────────────────────────────
     if (s.quietOn) {
       const now  = new Date();
       const nowM = now.getHours() * 60 + now.getMinutes();
@@ -81,21 +107,27 @@ TaskManager.defineTask(GEOFENCE_TASK, async ({ data, error }) => {
       if (inQ) return;
     }
 
-    // منع التكرار
+    // ── منع التكرار ──────────────────────────────────────────
     if (s.antiSpam) {
       const lastRaw = await AsyncStorage.getItem(KEY_LAST_NOTIF);
       if (lastRaw) {
-        const last = JSON.parse(lastRaw);
+        const last    = JSON.parse(lastRaw);
         const diffMin = (Date.now() - last.time) / 60000;
         if (diffMin < s.spamMins && last.type === (isEnter ? 'enter' : 'exit') && last.zone === region.identifier) return;
       }
     }
 
-    // إرسال الإشعار
+    // ── اختيار الرسالة: خاصة بالمنطقة أو الإعداد العام ─────
+    const zoneName = zone?.name || region.identifier;
+    const entryMsg = zone?.entryMessage?.trim() || s.entryMsg;
+    const exitMsg  = zone?.exitMessage?.trim()  || s.exitMsg;
+    const body     = isEnter ? entryMsg : exitMsg;
+
+    // ── إرسال الإشعار ────────────────────────────────────────
     await Notifications.scheduleNotificationAsync({
       content: {
-        title: isEnter ? `📍 دخلت: ${region.identifier}` : `🚶 خرجت: ${region.identifier}`,
-        body:  isEnter ? s.entryMsg : s.exitMsg,
+        title: isEnter ? `📍 دخلت: ${zoneName}` : `🚶 خرجت: ${zoneName}`,
+        body,
         sound: true,
       },
       trigger: null,
@@ -108,10 +140,10 @@ TaskManager.defineTask(GEOFENCE_TASK, async ({ data, error }) => {
     const hRaw = await AsyncStorage.getItem(KEY_HISTORY);
     const hist = hRaw ? JSON.parse(hRaw) : [];
     hist.unshift({
-      id: Date.now().toString(),
+      id:   Date.now().toString(),
       type: isEnter ? 'enter' : 'exit',
-      msg:  isEnter ? s.entryMsg : s.exitMsg,
-      zone: region.identifier,
+      msg:  body,
+      zone: zoneName,
       time: new Date().toLocaleString('ar-IQ'),
     });
     await AsyncStorage.setItem(KEY_HISTORY, JSON.stringify(hist.slice(0, 100)));
@@ -151,9 +183,9 @@ export default function App() {
   const [userLoc, setUserLoc]     = useState(null);
 
   // ── مناطق متعددة ─────────────────────────────────────────────
-  const [zones, setZones]         = useState([]);          // كل المناطق المحفوظة
-  const [draft, setDraft]         = useState(null);        // المنطقة قيد الإنشاء
-  const [editingId, setEditingId] = useState(null);        // منطقة قيد التعديل
+  const [zones, setZones]         = useState([]);
+  const [draft, setDraft]         = useState(null);
+  const [editingId, setEditingId] = useState(null);
   const [geoActive, setGeoActive] = useState(false);
 
   // ── بحث ──────────────────────────────────────────────────────
@@ -211,14 +243,12 @@ export default function App() {
     const ll = e.nativeEvent.coordinate;
 
     if (editingId) {
-      // تحديث موقع منطقة موجودة
       const updated = zones.map(z =>
         z.id === editingId ? { ...z, center: ll, address: 'جاري التحديد…' } : z
       );
       saveZones(updated);
       reverseGeoForZone(ll, editingId, updated);
     } else {
-      // إنشاء draft جديد
       const d = { ...newZoneTemplate(zones.length), center: ll, address: 'جاري التحديد…' };
       setDraft(d);
       reverseGeoForDraft(ll);
@@ -254,7 +284,7 @@ export default function App() {
       Alert.alert('تنبيه', '👆 اختر موقعاً على الخريطة أولاً');
       return;
     }
-    const name = draft.name.trim() || `منطقة ${zones.length + 1}`;
+    const name    = draft.name.trim() || `منطقة ${zones.length + 1}`;
     const newZone = { ...draft, name };
     const updated = [...zones, newZone];
     saveZones(updated);
@@ -309,8 +339,9 @@ export default function App() {
     }
 
     try {
+      // نستخدم z.id كمعرّف حتى يمكن جلب بيانات المنطقة (رسالة+جدول) في الـbackground task
       const regions = enabledZones.map(z => ({
-        identifier:    z.name,
+        identifier:    z.id,
         latitude:      z.center.latitude,
         longitude:     z.center.longitude,
         radius:        z.radius,
@@ -369,7 +400,17 @@ export default function App() {
   // ─── تنسيق القطر ─────────────────────────────────────────────
   const fmtR = (r) => r < 1000 ? `${r}م` : `${(r / 1000).toFixed(r % 1000 === 0 ? 0 : 1)}كم`;
 
-  // ─── البانل السفلي — ماذا يُعرض؟ ─────────────────────────────
+  // ─── وصف الجدول ──────────────────────────────────────────────
+  const fmtSchedule = (z) => {
+    const parts = [];
+    if (z.scheduleDays?.length > 0) {
+      parts.push(z.scheduleDays.map(d => DAY_LABELS[d]).join('،'));
+    }
+    if (z.scheduleDate) parts.push(z.scheduleDate);
+    return parts.length > 0 ? parts.join(' · ') : 'كل الأوقات';
+  };
+
+  // ─── البانل السفلي ────────────────────────────────────────────
   const editingZone = zones.find(z => z.id === editingId);
   const panelZone   = draft || editingZone;
   const isDraft     = !!draft && !editingId;
@@ -436,6 +477,7 @@ export default function App() {
                       <Text style={s.calloutName}>{z.name}</Text>
                       <Text style={s.calloutInfo}>{fmtR(z.radius)} · {z.mode === 'enter' ? 'دخول' : z.mode === 'exit' ? 'خروج' : 'كلاهما'}</Text>
                       <Text style={s.calloutAddr} numberOfLines={2}>{z.address}</Text>
+                      <Text style={[s.calloutAddr, { color: C.accent, marginTop: 3 }]}>⏰ {fmtSchedule(z)}</Text>
                     </View>
                   </Callout>
                 </Marker>
@@ -458,7 +500,7 @@ export default function App() {
             )}
           </MapView>
 
-          {/* ── شريط البحث (Google Maps style) ── */}
+          {/* ── شريط البحث ── */}
           <TouchableOpacity style={s.searchBar} onPress={() => setSearchOpen(true)} activeOpacity={0.85}>
             <Text style={s.searchBarIcon}>🔍</Text>
             <Text style={s.searchBarPlaceholder}>ابحث عن مكان أو عنوان…</Text>
@@ -467,14 +509,12 @@ export default function App() {
 
           {/* ── أزرار عائمة ── */}
           <View style={s.fabCol}>
-            {/* موقعي */}
             <TouchableOpacity style={s.fab} onPress={() => {
               if (userLoc) mapRef.current?.animateToRegion({ ...userLoc, latitudeDelta: 0.012, longitudeDelta: 0.012 }, 800);
             }}>
               <Text style={{ fontSize: 17 }}>📍</Text>
             </TouchableOpacity>
 
-            {/* إضافة منطقة جديدة */}
             <TouchableOpacity
               style={[s.fab, s.fabAdd]}
               onPress={() => {
@@ -492,7 +532,6 @@ export default function App() {
           <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
             <ScrollView style={s.panel} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
 
-              {/* حالة بدون اختيار */}
               {!panelZone && zones.length === 0 && (
                 <Text style={s.hint}>اضغط على <Text style={{ color: C.accent }}>+</Text> لإضافة أول منطقة تنبيه</Text>
               )}
@@ -500,10 +539,10 @@ export default function App() {
                 <Text style={s.hint}>اضغط على <Text style={{ color: C.accent }}>+</Text> لإضافة منطقة جديدة أو اضغط على دائرة لتعديلها</Text>
               )}
 
-              {/* ── تحرير منطقة (Draft أو موجودة) ── */}
+              {/* ── تحرير منطقة ── */}
               {panelZone && (
                 <View style={[s.editCard, { borderColor: panelZone.color }]}>
-                  {/* عنوان وإغلاق */}
+                  {/* عنوان */}
                   <View style={s.editHeader}>
                     <View style={[s.colorDot, { backgroundColor: panelZone.color }]} />
                     <Text style={s.editTitle}>
@@ -557,6 +596,88 @@ export default function App() {
                       </TouchableOpacity>
                     ))}
                   </View>
+
+                  {/* ══════════════════════════════════════════════════
+                      رسائل مخصصة (جديد)
+                  ══════════════════════════════════════════════════ */}
+                  <Text style={s.secLabel}>💬 رسائل خاصة بهذه المنطقة (اتركها فارغة للإعداد العام)</Text>
+                  <TextInput
+                    style={[s.input, { borderColor: panelZone.color + '55', fontSize: 12 }]}
+                    placeholder={`📍 رسالة دخول… (الافتراضي: ${DEFAULTS.entryMsg})`}
+                    placeholderTextColor="#444"
+                    value={panelZone.entryMessage || ''}
+                    onChangeText={t => isDraft
+                      ? setDraft(d => ({ ...d, entryMessage: t }))
+                      : updateZone(editingId, 'entryMessage', t)
+                    }
+                    editable={!geoActive}
+                  />
+                  <TextInput
+                    style={[s.input, { borderColor: panelZone.color + '55', fontSize: 12 }]}
+                    placeholder={`🚶 رسالة خروج… (الافتراضي: ${DEFAULTS.exitMsg})`}
+                    placeholderTextColor="#444"
+                    value={panelZone.exitMessage || ''}
+                    onChangeText={t => isDraft
+                      ? setDraft(d => ({ ...d, exitMessage: t }))
+                      : updateZone(editingId, 'exitMessage', t)
+                    }
+                    editable={!geoActive}
+                  />
+
+                  {/* ══════════════════════════════════════════════════
+                      جدولة التنبيه (جديد)
+                  ══════════════════════════════════════════════════ */}
+                  <Text style={s.secLabel}>📅 أيام التنبيه (اتركه فارغاً = كل الأيام)</Text>
+                  <View style={s.daysRow}>
+                    {DAY_LABELS.map((d, i) => {
+                      const days = panelZone.scheduleDays || [];
+                      const on   = days.includes(i);
+                      return (
+                        <TouchableOpacity
+                          key={i}
+                          style={[s.dayBtn, on && { backgroundColor: panelZone.color, borderColor: panelZone.color }]}
+                          onPress={() => {
+                            if (geoActive) return;
+                            const cur  = panelZone.scheduleDays || [];
+                            const next = on ? cur.filter(x => x !== i) : [...cur, i].sort((a, b) => a - b);
+                            isDraft
+                              ? setDraft(dd => ({ ...dd, scheduleDays: next }))
+                              : updateZone(editingId, 'scheduleDays', next);
+                          }}
+                        >
+                          <Text style={[s.dayTxt, on && { color: '#fff', fontWeight: '700' }]}>{d}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                  {(panelZone.scheduleDays?.length > 0) && (
+                    <TouchableOpacity
+                      style={s.clearDaysBtn}
+                      onPress={() => {
+                        if (geoActive) return;
+                        isDraft
+                          ? setDraft(d => ({ ...d, scheduleDays: [] }))
+                          : updateZone(editingId, 'scheduleDays', []);
+                      }}
+                    >
+                      <Text style={s.clearDaysTxt}>✕ مسح الأيام (كل الأيام)</Text>
+                    </TouchableOpacity>
+                  )}
+
+                  <Text style={s.secLabel}>📆 تاريخ محدد فقط — اختياري (مثال: 2026-12-25)</Text>
+                  <TextInput
+                    style={[s.input, { borderColor: panelZone.color + '55', fontSize: 13 }]}
+                    placeholder="YYYY-MM-DD — اتركه فارغاً لكل التواريخ"
+                    placeholderTextColor="#444"
+                    value={panelZone.scheduleDate || ''}
+                    onChangeText={t => isDraft
+                      ? setDraft(d => ({ ...d, scheduleDate: t }))
+                      : updateZone(editingId, 'scheduleDate', t)
+                    }
+                    keyboardType="numbers-and-punctuation"
+                    maxLength={10}
+                    editable={!geoActive}
+                  />
 
                   {/* القطر */}
                   <View style={s.radiusRow}>
@@ -623,7 +744,10 @@ export default function App() {
                         if (z.center) mapRef.current?.animateToRegion({ ...z.center, latitudeDelta: 0.01, longitudeDelta: 0.01 }, 700);
                       }}>
                         <Text style={s.zoneNameTxt}>{z.name}</Text>
-                        <Text style={s.zoneSubTxt}>{fmtR(z.radius)} · {z.mode === 'enter' ? 'دخول' : z.mode === 'exit' ? 'خروج' : 'كلاهما'}</Text>
+                        <Text style={s.zoneSubTxt}>
+                          {fmtR(z.radius)} · {z.mode === 'enter' ? 'دخول' : z.mode === 'exit' ? 'خروج' : 'كلاهما'}
+                          {(z.scheduleDays?.length > 0 || z.scheduleDate) ? ` · ⏰ ${fmtSchedule(z)}` : ''}
+                        </Text>
                       </TouchableOpacity>
                       <Switch
                         value={z.enabled}
@@ -719,8 +843,10 @@ export default function App() {
             </View>
           </SafeAreaView>
 
+          {/* ── رسائل الإشعار (الإعداد العام) ── */}
           <View style={s.settSec}>
-            <Text style={s.settSecTitle}>💬 رسائل الإشعار</Text>
+            <Text style={s.settSecTitle}>💬 رسائل الإشعار (الإعداد العام)</Text>
+            <Text style={s.settHint}>هذه الرسائل تُستخدم للمناطق التي لم تضبط لها رسالة خاصة</Text>
             <Text style={s.settLbl}>رسالة الدخول</Text>
             <TextInput style={s.settInput} value={settings.entryMsg}
               onChangeText={t => setSettings(p => ({ ...p, entryMsg: t }))}
@@ -736,6 +862,7 @@ export default function App() {
             </View>
           </View>
 
+          {/* ── منع التكرار ── */}
           <View style={s.settSec}>
             <Text style={s.settSecTitle}>🚫 منع تكرار الإشعار</Text>
             <View style={s.settRow}>
@@ -756,6 +883,7 @@ export default function App() {
             )}
           </View>
 
+          {/* ── وقت الهدوء ── */}
           <View style={s.settSec}>
             <Text style={s.settSecTitle}>🌙 وقت الهدوء</Text>
             <View style={s.settRow}>
@@ -889,7 +1017,7 @@ const s = StyleSheet.create({
 
   map: { flex: 1 },
 
-  // شريط البحث (Google Maps style)
+  // شريط البحث
   searchBar: {
     position: 'absolute', top: 52, left: 12, right: 12, zIndex: 10,
     flexDirection: 'row', alignItems: 'center',
@@ -914,7 +1042,7 @@ const s = StyleSheet.create({
   calloutAddr: { fontSize: 11, color: '#888', textAlign: 'right' },
 
   // Panel
-  panel: { backgroundColor: C.panel, borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: 380, paddingHorizontal: 14, paddingTop: 14 },
+  panel: { backgroundColor: C.panel, borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: 430, paddingHorizontal: 14, paddingTop: 14 },
 
   editCard:  { borderWidth: 1.5, borderRadius: 16, padding: 14, marginBottom: 12 },
   editHeader:{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
@@ -925,17 +1053,24 @@ const s = StyleSheet.create({
   addrTxt:  { color: '#ccc', fontSize: 12, textAlign: 'right', lineHeight: 18 },
   hint:     { color: '#666', textAlign: 'center', fontSize: 13, marginBottom: 10, lineHeight: 20 },
 
-  input: { backgroundColor: C.card, color: '#fff', borderRadius: 11, padding: 11, fontSize: 14, textAlign: 'right', borderWidth: 1, borderColor: C.border, marginBottom: 10 },
+  input: { backgroundColor: C.card, color: '#fff', borderRadius: 11, padding: 11, fontSize: 14, textAlign: 'right', borderWidth: 1, borderColor: C.border, marginBottom: 8 },
 
-  secLabel: { color: '#aaa', fontSize: 12, textAlign: 'right', marginBottom: 7 },
+  secLabel: { color: '#aaa', fontSize: 11, textAlign: 'right', marginBottom: 6, marginTop: 4 },
 
-  modeRow:   { flexDirection: 'row', gap: 6, marginBottom: 12 },
+  modeRow:   { flexDirection: 'row', gap: 6, marginBottom: 10 },
   modeBtn:   { flex: 1, paddingVertical: 9, borderRadius: 11, backgroundColor: C.card, borderWidth: 1, borderColor: C.border, alignItems: 'center' },
   modeBtnOn: { borderColor: 'transparent' },
   modeTxt:   { color: '#666', fontSize: 12 },
   modeTxtOn: { color: '#fff', fontWeight: '700' },
 
-  radiusRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 },
+  // ── أيام الأسبوع ─────────────────────────────────────────────
+  daysRow:      { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
+  dayBtn:       { width: 36, height: 36, borderRadius: 18, borderWidth: 1.5, borderColor: C.border, backgroundColor: C.card, justifyContent: 'center', alignItems: 'center' },
+  dayTxt:       { color: '#666', fontSize: 10 },
+  clearDaysBtn: { alignSelf: 'flex-end', marginBottom: 8 },
+  clearDaysTxt: { color: C.red, fontSize: 11 },
+
+  radiusRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3, marginTop: 6 },
   radiusVal: { fontSize: 16, fontWeight: '700' },
   radiusLbl: { color: '#bbb', fontSize: 13 },
   sliderEnds:{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
@@ -981,7 +1116,7 @@ const s = StyleSheet.create({
   histTime:    { color: '#555', fontSize: 11, textAlign: 'right' },
 
   settSec:      { backgroundColor: C.panel, margin: 12, marginBottom: 0, borderRadius: 18, padding: 16, borderWidth: 1, borderColor: C.border },
-  settSecTitle: { color: '#fff', fontSize: 15, fontWeight: '700', marginBottom: 14, textAlign: 'right' },
+  settSecTitle: { color: '#fff', fontSize: 15, fontWeight: '700', marginBottom: 10, textAlign: 'right' },
   settLbl:      { color: '#aaa', fontSize: 13, textAlign: 'right', marginBottom: 6 },
   settInput:    { backgroundColor: C.card, color: '#fff', borderRadius: 12, padding: 13, fontSize: 14, textAlign: 'right', borderWidth: 1, borderColor: C.border, marginBottom: 12 },
   settRow:      { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
