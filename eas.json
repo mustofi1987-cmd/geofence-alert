@@ -4,11 +4,11 @@
     "appVersionSource": "local"
   },
   "build": {
-    "preview": {
+    "development": {
       "distribution": "internal",
-      "withoutCredentials": true,
       "ios": {
-        "simulator": false
+        "simulator": false,
+        "buildConfiguration": "Release"
       }
     },
     "adhoc": {
@@ -20,11 +20,6 @@
     "simulator": {
       "ios": {
         "simulator": true
-      }
-    },
-    "production": {
-      "ios": {
-        "autoIncrement": true
       }
     }
   },

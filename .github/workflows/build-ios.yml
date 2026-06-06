@@ -1,0 +1,91 @@
+name: Build iOS IPA (Unsigned)
+
+on:
+  push:
+    branches: [master, main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build iOS App
+    runs-on: macos-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: Install Expo CLI
+        run: npm install -g expo-cli @expo/cli
+
+      - name: Expo Prebuild (generate native iOS project)
+        run: npx expo prebuild --platform ios --no-install --clean
+        env:
+          EXPO_OFFLINE: 'true'
+          CI: 'true'
+
+      - name: Setup Ruby & CocoaPods
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.1'
+
+      - name: Install CocoaPods dependencies
+        run: |
+          cd ios
+          pod install --repo-update
+        env:
+          COCOAPODS_DISABLE_STATS: 'true'
+
+      - name: Build Archive (unsigned)
+        run: |
+          cd ios
+          xcodebuild \
+            -workspace mememememe.xcworkspace \
+            -scheme mememememe \
+            -configuration Release \
+            -sdk iphoneos \
+            -archivePath $RUNNER_TEMP/app.xcarchive \
+            archive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            DEVELOPMENT_TEAM="" \
+            | xcpretty --simple || xcodebuild \
+            -workspace mememememe.xcworkspace \
+            -scheme mememememe \
+            -configuration Release \
+            -sdk iphoneos \
+            -archivePath $RUNNER_TEMP/app.xcarchive \
+            archive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            DEVELOPMENT_TEAM=""
+
+      - name: Package IPA from archive
+        run: |
+          APP_PATH=$(find $RUNNER_TEMP/app.xcarchive/Products/Applications -name "*.app" | head -1)
+          echo "Found app at: $APP_PATH"
+          mkdir -p Payload
+          cp -r "$APP_PATH" Payload/
+          zip -r app-unsigned.ipa Payload
+          ls -lh app-unsigned.ipa
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GeofenceAlert-iOS-unsigned
+          path: app-unsigned.ipa
+          retention-days: 14
+          if-no-files-found: error
