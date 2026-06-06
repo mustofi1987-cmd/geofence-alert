@@ -30,8 +30,17 @@ jobs:
       - name: Expo Prebuild (generate native iOS project)
         run: npx expo prebuild --platform ios --no-install --clean
         env:
-          EXPO_OFFLINE: 'true'
           CI: 'true'
+
+      - name: Verify iOS directory was created
+        run: |
+          if [ ! -d "ios" ]; then
+            echo "ERROR: ios directory was not created by expo prebuild!"
+            ls -la
+            exit 1
+          fi
+          echo "iOS directory created successfully"
+          ls -la ios/
 
       - name: Setup Ruby & CocoaPods
         uses: ruby/setup-ruby@v1
@@ -39,18 +48,25 @@ jobs:
           ruby-version: '3.1'
 
       - name: Install CocoaPods dependencies
-        run: |
-          cd ios
-          pod install --repo-update
+        run: pod install --repo-update
+        working-directory: ios
         env:
           COCOAPODS_DISABLE_STATS: 'true'
 
+      - name: Find Xcode workspace
+        id: find_workspace
+        run: |
+          WORKSPACE=$(find ios -name "*.xcworkspace" -maxdepth 1 | head -1)
+          SCHEME=$(basename "$WORKSPACE" .xcworkspace)
+          echo "workspace=$WORKSPACE" >> $GITHUB_OUTPUT
+          echo "scheme=$SCHEME" >> $GITHUB_OUTPUT
+          echo "Found workspace: $WORKSPACE, scheme: $SCHEME"
+
       - name: Build Archive (unsigned)
         run: |
-          cd ios
           xcodebuild \
-            -workspace mememememe.xcworkspace \
-            -scheme mememememe \
+            -workspace "${{ steps.find_workspace.outputs.workspace }}" \
+            -scheme "${{ steps.find_workspace.outputs.scheme }}" \
             -configuration Release \
             -sdk iphoneos \
             -archivePath $RUNNER_TEMP/app.xcarchive \
@@ -61,8 +77,8 @@ jobs:
             PROVISIONING_PROFILE_SPECIFIER="" \
             DEVELOPMENT_TEAM="" \
             | xcpretty --simple || xcodebuild \
-            -workspace mememememe.xcworkspace \
-            -scheme mememememe \
+            -workspace "${{ steps.find_workspace.outputs.workspace }}" \
+            -scheme "${{ steps.find_workspace.outputs.scheme }}" \
             -configuration Release \
             -sdk iphoneos \
             -archivePath $RUNNER_TEMP/app.xcarchive \
